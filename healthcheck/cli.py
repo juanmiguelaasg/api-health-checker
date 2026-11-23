@@ -107,8 +107,29 @@ def cmd_newman(args) -> int:
     return run_newman(Path(args.collection), Path(args.junit) if args.junit else None, env)
 
 
+def cmd_heartbeat(args) -> int:
+    """Exit 0 if the last scheduled run is recent – used as the Docker HEALTHCHECK."""
+    from .history import History
+    cfg = load_config(args.config)
+    runs = History(cfg.settings.history_file).runs()
+    max_age = args.max_age or cfg.settings.interval_seconds * 3
+    if not runs:
+        print("unhealthy: no runs recorded yet")
+        return 1
+    age = time.time() - runs[-1]["ts"]
+    if age > max_age:
+        print(f"unhealthy: last run {age:.0f}s ago (limit {max_age}s)")
+        return 1
+    print(f"ok: last run {age:.0f}s ago, {runs[-1]['ok']}/{runs[-1]['total']} endpoints passed")
+    return 0
+
+
 def cmd_gui(args) -> int:
-    from .gui import main as gui_main
+    try:
+        from .ui.app import main as gui_main
+    except ImportError as exc:
+        raise RuntimeError("the desktop app is not available in this install (headless / Docker image). "
+                           f"Install the full requirements.txt on a machine with a display. ({exc})") from exc
     gui_main(args.config, demo=args.demo)
     return 0
 
@@ -153,6 +174,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--junit")
     s.add_argument("--env-var", action="append", help="KEY=VALUE (repeatable)")
     s.set_defaults(func=cmd_newman)
+
+    s = sub.add_parser("heartbeat", help="exit 0 if the last run is recent (container health check)")
+    s.add_argument("--max-age", type=int, help="seconds (default: 3 x interval_seconds)")
+    s.set_defaults(func=cmd_heartbeat)
 
     s = sub.add_parser("gui", help="desktop app")
     s.add_argument("--demo", action="store_true", help="also start the built-in demo API on port 8000")

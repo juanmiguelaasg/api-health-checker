@@ -1,0 +1,64 @@
+# API Health-Checker – checker + status page (+ optional demo API)
+#
+#   docker compose --profile demo up -d     # try it with the built-in demo API
+#   docker compose up -d                    # your own API: set BASE_URL in .env
+#
+# Status page: http://localhost:8080
+
+services:
+  checker:
+    build: .
+    image: api-health-checker:1.0.0
+    container_name: api-health-checker
+    restart: unless-stopped
+    command: ["watch"]
+    environment:
+      BASE_URL: ${BASE_URL:-http://demo-api:8000}
+      API_TOKEN: ${API_TOKEN:-}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ESCALATION_WEBHOOK_URL: ${ESCALATION_WEBHOOK_URL:-}
+    volumes:
+      # edit endpoints.yaml on the host, then: docker compose restart checker
+      - ./endpoints.yaml:/app/endpoints.yaml:ro
+      - ./schemas:/app/schemas:ro
+      - hc-data:/app/data
+      - hc-site:/app/site
+    depends_on:
+      demo-api:
+        condition: service_healthy
+        required: false        # only waits when the demo profile is enabled
+    stop_grace_period: 10s
+
+  status-page:
+    image: nginx:1.27-alpine
+    container_name: api-status-page
+    restart: unless-stopped
+    ports:
+      - "${STATUS_PAGE_PORT:-8080}:80"
+    volumes:
+      - hc-site:/usr/share/nginx/html:ro
+    depends_on:
+      - checker
+
+  demo-api:
+    profiles: ["demo"]
+    build: .
+    image: api-health-checker:1.0.0
+    container_name: api-demo
+    restart: unless-stopped
+    entrypoint: ["python", "mock_api.py"]
+    command: ["8000", "degraded"]
+    environment:
+      DEMO_HOST: 0.0.0.0
+    ports:
+      # exposed so the desktop app's DEMO API card and curl can switch modes
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/__demo/mode', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  hc-data:
+  hc-site:

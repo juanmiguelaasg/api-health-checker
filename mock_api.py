@@ -16,7 +16,10 @@ Demo modes, switchable at runtime (the desktop app's DEMO API card uses this):
   degraded  /api/report is slow, /api/payments/status is flaky
   outage    every endpoint returns 503
 """
+from __future__ import annotations
+
 import json
+import os
 import random
 import sys
 import time
@@ -94,16 +97,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def serve(port: int = 8000) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+def serve(port: int = 8000, host: str | None = None) -> ThreadingHTTPServer:
+    """Bind to 127.0.0.1 by default; set DEMO_HOST=0.0.0.0 inside a container."""
+    return ThreadingHTTPServer((host or os.environ.get("DEMO_HOST", "127.0.0.1"), port), Handler)
 
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     if len(sys.argv) > 2:
         set_mode(sys.argv[2])
-    print(f"Demo API: http://127.0.0.1:{port}  mode={MODE}  (Ctrl+C to stop)")
+    server = serve(port)
+    print(f"Demo API: http://{server.server_address[0]}:{port}  mode={MODE}  (Ctrl+C to stop)", flush=True)
     try:
-        serve(port).serve_forever()
+        server.serve_forever()
     except KeyboardInterrupt:
         pass
