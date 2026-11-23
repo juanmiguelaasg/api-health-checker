@@ -88,6 +88,18 @@ stages:
               targetPath: site
               artifact: status-page
 
+      - job: Docker
+        displayName: Docker image
+        steps:
+          - script: docker build -t api-health-checker:$(Build.BuildId) .
+            displayName: Build image
+          - script: >
+              docker run --rm
+              -e BASE_URL=$(BASE_URL)
+              -e API_TOKEN=$(API_TOKEN)
+              api-health-checker:$(Build.BuildId) run --no-alerts
+            displayName: Run one check inside the container
+
       - job: Newman
         displayName: Postman / Newman tests
         steps:
