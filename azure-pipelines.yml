@@ -1,0 +1,118 @@
+# Azure DevOps pipeline – API health check after every deploy and on a schedule
+#
+# Pipeline variables (a Library variable group is recommended):
+#   BASE_URL                – base URL of the environment under test
+#   API_TOKEN               – (secret) API token
+#   ALERT_WEBHOOK_URL       – (secret) Teams/Slack webhook
+#   ESCALATION_WEBHOOK_URL  – (secret) escalation webhook
+
+trigger:
+  branches:
+    include: [main]
+
+schedules:
+  - cron: "*/15 * * * *"          # every 15 minutes, UTC
+    displayName: Scheduled health check
+    branches:
+      include: [main]
+    always: true                   # run even when there are no new commits
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - name: BASE_URL
+    value: https://staging.example.com
+  - name: PYTHON_VERSION
+    value: "3.12"
+
+stages:
+  # ------------------------------------------------------------------
+  - stage: Deploy
+    condition: ne(variables['Build.Reason'], 'Schedule')
+    jobs:
+      - job: Deploy
+        steps:
+          - script: echo "Your real deploy step goes here (e.g. AzureWebApp@1)."
+            displayName: Deploy (placeholder)
+
+  # ------------------------------------------------------------------
+  - stage: HealthCheck
+    displayName: API health check
+    dependsOn: Deploy
+    condition: or(succeeded('Deploy'), eq(variables['Build.Reason'], 'Schedule'))
+    jobs:
+      - job: Python
+        displayName: Python health checker
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+
+          - script: pip install requests PyYAML jsonschema
+            displayName: Install dependencies
+
+          # Keep history between runs (needed for failure confirmation and SLA numbers)
+          - task: Cache@2
+            displayName: Restore history
+            inputs:
+              key: 'healthcheck-history | "$(Build.SourceBranchName)" | "$(Build.BuildId)"'
+              restoreKeys: |
+                healthcheck-history | "$(Build.SourceBranchName)"
+              path: data
+
+          - script: python -m healthcheck run --junit results/healthcheck.xml --fail-on-error
+            displayName: Check endpoints
+            env:
+              BASE_URL: $(BASE_URL)
+              API_TOKEN: $(API_TOKEN)
+              ALERT_WEBHOOK_URL: $(ALERT_WEBHOOK_URL)
+              ESCALATION_WEBHOOK_URL: $(ESCALATION_WEBHOOK_URL)
+
+          - script: python -m healthcheck report
+            displayName: SLA report
+            condition: always()
+
+          - task: PublishTestResults@2
+            displayName: Publish test results
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: results/healthcheck.xml
+              testRunTitle: API health check
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish status page
+            condition: always()
+            inputs:
+              targetPath: site
+              artifact: status-page
+
+      - job: Newman
+        displayName: Postman / Newman tests
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "20.x"
+          - script: |
+              pip install requests PyYAML jsonschema
+              npm install -g newman
+            displayName: Install tools
+          - script: python -m healthcheck postman-export
+            displayName: Generate Postman collection from YAML
+          - script: >
+              newman run postman/health-check.postman_collection.json
+              --env-var "BASE_URL=$(BASE_URL)"
+              --env-var "API_TOKEN=$(API_TOKEN)"
+              --reporters cli,junit
+              --reporter-junit-export results/newman.xml
+            displayName: Run Newman
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: results/newman.xml
+              testRunTitle: Postman / Newman
