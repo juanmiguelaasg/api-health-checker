@@ -1,0 +1,66 @@
+# Automated API Health-Checker – endpoints and expectations
+# Use ${VAR:-default} to read environment variables (e.g. BASE_URL in the pipeline).
+
+settings:
+  interval_seconds: 60        # how often scheduled runs happen (watch / desktop app)
+  timeout_seconds: 10         # HTTP timeout
+  retries: 2                  # immediate retries within one run (filters transient errors)
+  retry_delay_seconds: 1
+  confirm_failures: 2         # alert only after this many consecutive failed runs
+  escalate_after: 5           # once alerting, escalate on every 5th further failure
+  history_file: data/history.json
+  history_limit: 5000         # results kept per endpoint
+  status_page: site/index.html
+  alerts:
+    webhook_url: ${ALERT_WEBHOOK_URL:-}             # Teams / Slack incoming webhook
+    escalation_webhook_url: ${ESCALATION_WEBHOOK_URL:-}
+
+endpoints:
+  - name: Health
+    url: ${BASE_URL:-http://127.0.0.1:8000}/health
+    expected_status: 200
+    max_response_ms: 300
+    sla_target: 99.95
+    contains: ['"status": "ok"']
+
+  - name: List users
+    url: ${BASE_URL:-http://127.0.0.1:8000}/api/users
+    headers:
+      Accept: application/json
+      Authorization: Bearer ${API_TOKEN:-demo-token}
+    expected_status: 200
+    max_response_ms: 500
+    sla_target: 99.9
+    schema:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        required: [id, name, email]
+        properties:
+          id: {type: integer}
+          name: {type: string}
+          email: {type: string, format: email}
+
+  - name: Create user
+    url: ${BASE_URL:-http://127.0.0.1:8000}/api/users
+    method: POST
+    headers:
+      Content-Type: application/json
+    body: {name: Health Check, email: hc@example.com}
+    expected_status: [200, 201]
+    max_response_ms: 800
+    sla_target: 99.5
+    schema_file: schemas/user.json
+
+  - name: Report (slow)
+    url: ${BASE_URL:-http://127.0.0.1:8000}/api/report
+    expected_status: 200
+    max_response_ms: 800
+    sla_target: 99.0
+
+  - name: Payments (flaky)
+    url: ${BASE_URL:-http://127.0.0.1:8000}/api/payments/status
+    expected_status: 200
+    max_response_ms: 500
+    sla_target: 99.0
