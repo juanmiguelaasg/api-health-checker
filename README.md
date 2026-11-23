@@ -9,6 +9,7 @@
 [![Postman](https://img.shields.io/badge/Postman-import%20%C2%B7%20export-FF6C37?style=for-the-badge&logo=postman&logoColor=white)](#postman-and-newman)
 [![Azure DevOps](https://img.shields.io/badge/Azure%20DevOps-pipeline-0078D7?style=for-the-badge&logo=azuredevops&logoColor=white)](#azure-devops)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter-1F6FEB?style=for-the-badge)](https://github.com/TomSchimansky/CustomTkinter)
+[![Docker](https://img.shields.io/badge/Docker-headless%20checker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](#docker)
 
 [![Version](https://img.shields.io/badge/version-1.0.0-22D3EE?style=flat-square)](#)
 [![Platform](https://img.shields.io/badge/desktop-Windows-0B0E14?style=flat-square&logo=windows&logoColor=white)](#quick-start)
@@ -19,7 +20,7 @@
 [![Alerts](https://img.shields.io/badge/alerts-confirmed%20only-FB7185?style=flat-square)](#alerting-without-false-alarms)
 [![Webhooks](https://img.shields.io/badge/webhooks-Teams%20%C2%B7%20Slack-4B53BC?style=flat-square&logo=microsoftteams&logoColor=white)](#alerting-without-false-alarms)
 [![JUnit](https://img.shields.io/badge/reports-JUnit%20XML-25A162?style=flat-square)](#azure-devops)
-[![Tests](https://img.shields.io/badge/tests-10%20passed-34D399?style=flat-square&logo=pytest&logoColor=white)](#running-the-tests)
+[![Tests](https://img.shields.io/badge/tests-16%20passed-34D399?style=flat-square&logo=pytest&logoColor=white)](#running-the-tests)
 
 <br>
 
@@ -42,6 +43,7 @@
 - [Command line](#command-line)
 - [Postman and Newman](#postman-and-newman)
 - [Azure DevOps](#azure-devops)
+- [Docker](#docker)
 - [Project structure](#project-structure)
 - [Running the tests](#running-the-tests)
 - [Troubleshooting](#troubleshooting)
@@ -65,6 +67,7 @@ API Health-Checker calls your endpoints from the outside, the way a client would
 | **Status page** | A static HTML/CSS page (no JavaScript) with the current state, the last 60 checks and a response-time sparkline for each service. It is rebuilt after every run. |
 | **Postman** | Export the YAML to a Postman v2.1 collection with ready-made `pm.test` assertions, or import an existing collection (folders and environment included) into YAML. You can run it with Newman. |
 | **CI/CD** | The Azure DevOps pipeline runs after every deploy and on a 15-minute schedule. It publishes JUnit results and the status page, and fails the build when an endpoint is down. |
+| **Docker** | A slim headless image (no GUI dependencies, non-root, with a built-in `HEALTHCHECK`) and a Compose stack with the checker, an nginx-served status page and an optional demo API. |
 | **Notifications** | Console, desktop toasts, and Teams / Slack incoming webhooks, with a separate webhook for escalations. |
 | **Demo mode** | A built-in demo API you can switch between *Healthy*, *Degraded* and *Outage* from the sidebar. Use it to watch alerts, escalations and recoveries happen live. |
 
@@ -258,6 +261,7 @@ python -m healthcheck [-c endpoints.yaml] <command>
   postman-import   Postman collection → YAML   -e environment.json  -o endpoints.yaml
   postman-export   YAML → Postman collection   -o postman/health-check.postman_collection.json
   newman           run a collection in Newman  --junit out.xml  --env-var BASE_URL=...
+  heartbeat        exit 0 if the last run is recent (container health check)  --max-age 180
 ```
 
 | Exit code | Meaning |
@@ -300,9 +304,55 @@ pm.test("JSON schema", function () {
 | Job | Steps |
 | --- | --- |
 | **Python health checker** | restore history from cache → `healthcheck run --junit --fail-on-error` → SLA report → publish JUnit results → publish `site/` as the `status-page` artifact |
+| **Docker image** | `docker build` → run one check inside the container, so a broken Dockerfile fails CI |
 | **Postman / Newman** | generate the collection from YAML → `newman run` with JUnit reporter → publish results |
 
 Set these pipeline variables (secret where marked 🔒): `BASE_URL`, `API_TOKEN` 🔒, `ALERT_WEBHOOK_URL` 🔒, `ESCALATION_WEBHOOK_URL` 🔒.
+
+## Docker
+
+The desktop app needs a display, so the container runs the checker **headless** in `watch` mode. The image is built on `python:3.12-slim`, has no GUI dependencies, and runs as a non-root user.
+
+### With Docker Compose
+
+```bash
+docker compose --profile demo up -d     # checker + status page + demo API
+docker compose up -d                    # checker + status page against your own API
+```
+
+| Service | What it does | Port |
+| --- | --- | --- |
+| `checker` | `python -m healthcheck watch`; history in the `hc-data` volume, status page in `hc-site` | – |
+| `status-page` | nginx serving the generated status page | **8080** |
+| `demo-api` | *(profile `demo`)* the demo REST API, switchable between healthy / degraded / outage | 8000 |
+
+Open **http://localhost:8080** for the status page. For your own API, copy `.env.example` to `.env` and set `BASE_URL`, `API_TOKEN` and the webhook URLs. `endpoints.yaml` and `schemas/` are mounted from the host, so after editing them run `docker compose restart checker`.
+
+With the demo profile running, the desktop app on the host finds the demo API on port 8000, so its **DEMO API** card can switch the container's mode too.
+
+### With plain Docker
+
+```bash
+docker build -t api-health-checker .
+
+docker run -d --name api-health-checker \
+  -e BASE_URL=https://api.example.com \
+  -e ALERT_WEBHOOK_URL=https://... \
+  -v ./endpoints.yaml:/app/endpoints.yaml:ro \
+  -v hc-data:/app/data -v hc-site:/app/site \
+  api-health-checker
+
+docker run --rm -e BASE_URL=https://api.example.com api-health-checker run --fail-on-error   # one-off, e.g. in CI
+docker logs -f api-health-checker                                                           # alerts appear here too
+```
+
+### Details
+
+- **Entrypoint** is `python -m healthcheck`, so any [CLI command](#command-line) works as the container command (`run`, `report`, `postman-export`, …).
+- **Health check:** `python -m healthcheck heartbeat` reports the container as *unhealthy* if no run has finished within 3 × `interval_seconds`.
+- **Volumes:** `/app/data` holds the history (needed for alert confirmation and SLA numbers across restarts); `/app/site` holds `index.html`.
+- **`.dockerignore`** keeps the desktop UI, tests, docs and local data out of the build context.
+- The Azure pipeline's **Docker image** job builds the image and runs one check inside it on every pipeline run.
 
 ## Project structure
 
@@ -327,6 +377,10 @@ api-health-checker/
 ├── docs/screenshots/
 ├── endpoints.yaml       checks and settings
 ├── mock_api.py          demo REST API (healthy / degraded / outage modes)
+├── Dockerfile           headless checker image
+├── docker-compose.yml   checker + nginx status page + demo API
+├── .env.example         settings for docker compose
+├── requirements-headless.txt
 └── azure-pipelines.yml
 ```
 
@@ -337,7 +391,7 @@ pip install pytest
 python -m pytest -q tests
 ```
 
-The suite starts the demo API on a random port and covers schema violations, wrong status codes, slow responses, connection errors, POST bodies, the alert / escalation / recovery sequence, uptime math, the Postman export → import round trip, the demo API's healthy / outage modes, and a full run with the status page and JUnit output.
+The suite starts the demo API on a random port and covers schema violations, wrong status codes, slow responses, connection errors, POST bodies, the alert / escalation / recovery sequence, uptime math, the Postman export → import round trip, the demo API's healthy / outage modes, and a full run with the status page and JUnit output. `tests/test_docker.py` checks the Docker setup without needing Docker: the headless path never imports Tk, the headless requirements are a subset of the full ones, `.dockerignore` keeps everything the image copies, the Compose file points at real files, and `heartbeat` reports fresh and stale runs correctly.
 
 ## Troubleshooting
 
@@ -347,4 +401,6 @@ The suite starts the demo API on a random port and covers schema violations, wro
 | *Newman is not installed* | Install Node.js, then run `npm install -g newman`. The pipeline's Newman job installs it automatically. |
 | *Configuration error* on start | The message names the problem (missing `name`/`url`, duplicate name, missing schema file). The in-app editor won't save an invalid file. |
 | Alerts never fire | Alerts need `confirm_failures` failed runs in a row. In CI, keep the `Cache@2` step so the history survives between runs. |
+| Container shows *unhealthy* | No run finished within 3 × `interval_seconds`. Check `docker logs api-health-checker`; often `BASE_URL` points to a host the container can't reach. To reach an API on the Docker host, use `http://host.docker.internal:<port>`. |
+| Status page on :8080 shows *403 Forbidden* | The first run hasn't finished yet, so there is no `index.html`. Wait a few seconds. |
 | Webhook alerts don't arrive | Check `ALERT_WEBHOOK_URL`. Delivery errors are logged; run with `-v` to see them. |
