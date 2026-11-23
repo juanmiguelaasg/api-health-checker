@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Generated at runtime
+data/
+site/
+results/
+postman/
+
+# Config editor / importer leftovers
+*.bak
+endpoints.imported.yaml
+.validate-*.yaml
+
+# Local secrets (if you ever add one)
+.env
