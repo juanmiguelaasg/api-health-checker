@@ -173,7 +173,7 @@ class SlaBars(tk.Canvas):
         values = [v for _, v, _ in self.rows if v is not None] + [tg for _, _, tg in self.rows]
         lo = min(values)
         floor = max(0.0, min(95.0, math.floor(lo - (100 - lo) * 0.25)))
-        label_w, value_w = px(190), px(150)
+        label_w, value_w = px(190), px(180)
         x0, x1 = label_w, w - value_w
         span = 100 - floor
         bar_h, row_h = px(12), px(38)
@@ -218,12 +218,13 @@ class Panel(ctk.CTkFrame):
         self.body = ctk.CTkFrame(self, fg_color="transparent")
         self.body.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
-    def legend(self, items: Sequence[tuple[str, str]]) -> None:
-        for child in self.slot.winfo_children():
+    def legend(self, items: Sequence[tuple[str, str]], master=None) -> None:
+        target = master or self.slot
+        for child in target.winfo_children():
             child.destroy()
-        for label, color in items:
-            box = ctk.CTkFrame(self.slot, fg_color="transparent")
-            box.pack(side="left", padx=(12, 0))
+        for i, (label, color) in enumerate(items):
+            box = ctk.CTkFrame(target, fg_color="transparent")
+            box.pack(side="left", padx=(0 if master and i == 0 else 12, 0))
             ctk.CTkFrame(box, width=10, height=10, corner_radius=5, fg_color=color).pack(side="left", padx=(0, 6))
             ctk.CTkLabel(box, text=label, font=FONTS.small, text_color=t.MUTED).pack(side="left")
 

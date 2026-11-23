@@ -52,7 +52,7 @@ class SlaPage(Page):
             budget = e.error_budget
             values = (e.name, f"{e.sla_target:g}%", t.fmt_pct(e.up24, 3), t.fmt_pct(e.up7, 3),
                       t.fmt_pct(e.up30, 3), "–" if e.up30 is None else ("yes" if e.sla_met else "NO"),
-                      "–" if budget is None else f"{budget:.0f}%", t.fmt_ms(e.avg), t.fmt_ms(e.p95),
+                      "–" if budget is None else ("exhausted" if budget <= 0 else f"{budget:.0f}%"), t.fmt_ms(e.avg), t.fmt_ms(e.p95),
                       len(e.results))
             status = "none" if e.up30 is None else ("ok" if e.sla_met else "down")
             items.append((e.name, values, (status,)))

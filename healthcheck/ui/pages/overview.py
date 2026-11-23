@@ -79,8 +79,10 @@ class OverviewPage(Page):
         self.hist = w.Panel(mid, "Response time history", "Per endpoint, last 60 checks")
         self.hist.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         self.hist.body.grid_columnconfigure(0, weight=1)
-        self.chart = w.LineChart(self.hist.body, height=190, fmt=lambda v: f"{v:.0f} ms", fill=False)
-        self.chart.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.legend_box = ctk.CTkFrame(self.hist.body, fg_color="transparent")
+        self.legend_box.grid(row=0, column=0, sticky="w", padx=8)
+        self.chart = w.LineChart(self.hist.body, height=150, fmt=lambda v: f"{v:.0f} ms", fill=False)
+        self.chart.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
 
         self.ev_panel = w.Panel(mid, "Recent events", "Confirmed alerts and recoveries")
         self.ev_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
@@ -145,15 +147,17 @@ class OverviewPage(Page):
         fails = [r["total"] - r["ok"] for r in runs]
         day_events = [e for e in snap.events if e["ts"] > time.time() - 86400 and e["kind"] != "RECOVERY"]
         self.c_alerts.update_card(str(fails[-1]) if fails else "–",
-                                  f"{len(day_events)} alerts / escalations in 24h",
-                                  f"{len(day_events)} ALERTS" if day_events else "QUIET",
+                                  f"Alerts + escalations in 24h: {len(day_events)}",
+                                  (f"{len(day_events)} ALERT" + ("S" if len(day_events) != 1 else ""))
+                                  if day_events else "QUIET",
                                   fails, t.ROSE if day_events else t.GREEN)
 
         series = [w.Series(e.name, t.SERIES[i % len(t.SERIES)],
                            [r["elapsed_ms"] for r in e.results[-60:] if r.get("elapsed_ms") is not None])
                   for i, e in enumerate(eps)]
         self.chart.set_series(series)
-        self.hist.legend([(s.label if len(s.label) < 16 else s.label[:14] + "…", s.color) for s in series[:5]])
+        self.hist.legend([(s.label if len(s.label) < 18 else s.label[:16] + "…", s.color) for s in series[:6]],
+                         master=self.legend_box)
 
         self._render_events(snap.events[-6:][::-1])
         self._render_services(eps)

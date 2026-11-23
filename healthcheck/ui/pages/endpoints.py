@@ -78,6 +78,8 @@ class EndpointsPage(Page):
         if name in self.table.tree.get_children():
             self.table.tree.selection_set(name)
             self.table.tree.see(name)
+        if self.snapshot:
+            self._render_detail(self.snapshot)
 
     def _on_select(self) -> None:
         sel = self.table.selected()

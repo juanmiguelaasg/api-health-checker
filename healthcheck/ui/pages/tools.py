@@ -58,7 +58,8 @@ class PostmanPage(Page):
                             "status code, response time, body content and JSON schema. ${BASE_URL} becomes {{BASE_URL}}.",
                             t.AMBER)
         card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self.exp_info = ctk.CTkLabel(inner, text="", font=w.FONTS.mono_small, text_color=t.DIM, anchor="w")
+        self.exp_info = ctk.CTkLabel(inner, text="", font=w.FONTS.mono_small, text_color=t.DIM, anchor="w",
+                                     justify="left")
         self.exp_info.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
         btns = ctk.CTkFrame(inner, fg_color="transparent")
         btns.grid(row=1, column=0, sticky="w")
@@ -87,7 +88,8 @@ class PostmanPage(Page):
         nm.body.grid_columnconfigure(0, weight=1)
         nm.body.grid_rowconfigure(0, weight=1)
         self.newman_panel = nm
-        self.run_btn = w.accent_button(nm.slot, "Run", self._run_newman, color=t.GREEN, width=110)
+        self.run_btn = w.accent_button(nm.slot, "Run", self._run_newman, color=t.GREEN, width=110,
+                                       text_color_disabled=t.mix("#0b0e14", t.GREEN, 0.35))
         self.run_btn.pack(side="right")
         self.out = ctk.CTkTextbox(nm.body, font=w.FONTS.mono_small, fg_color=t.SURFACE, text_color=t.MUTED,
                                   border_width=1, border_color=t.BORDER, corner_radius=10, wrap="none")
@@ -103,7 +105,8 @@ class PostmanPage(Page):
 
     def on_show(self) -> None:
         p = self._export_path()
-        self.exp_info.configure(text=f"{p}\n" + (f"last export: {t.fmt_time(p.stat().st_mtime, True)}"
+        rel = p.relative_to(self.app.monitor.config_path.parent).as_posix()
+        self.exp_info.configure(text=f"{rel}\n" + (f"last export: {t.fmt_time(p.stat().st_mtime, True)}"
                                                  if p.exists() else "not exported yet"))
 
     def _export(self) -> None:
