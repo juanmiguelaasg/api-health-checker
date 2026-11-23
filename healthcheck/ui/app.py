@@ -10,6 +10,7 @@ import tkinter as tk
 from pathlib import Path
 
 import customtkinter as ctk
+import requests
 
 from .. import __version__
 from . import theme as t
@@ -30,6 +31,22 @@ NAV = [
     ("postman", "Postman", PostmanPage),
     ("config", "Configuration", ConfigPage),
 ]
+
+DEMO_CONTROL_URL = "http://127.0.0.1:8000/__demo/mode"
+DEMO_MODES = {
+    "Healthy": ("healthy", t.GREEN, "Every endpoint answers fast with 2xx."),
+    "Degraded": ("degraded", t.AMBER, "Report is slow, Payments fails ~30% of the time."),
+    "Outage": ("outage", t.ROSE, "Every endpoint returns 503."),
+}
+
+
+def probe_demo_api(timeout: float = 0.5) -> str | None:
+    """Current demo mode if the demo API is reachable, else None."""
+    try:
+        r = requests.get(DEMO_CONTROL_URL, timeout=timeout)
+        return r.json().get("mode") if r.ok else None
+    except (requests.RequestException, ValueError):
+        return None
 
 
 class App(ctk.CTk):
@@ -53,6 +70,8 @@ class App(ctk.CTk):
         self._unseen = 0
         self._toasts: list[ctk.CTkFrame] = []
         self._pulse = False
+        self.demo_mode = probe_demo_api()
+        self._ui_queue: queue.Queue = queue.Queue()   # worker threads -> UI thread
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -117,8 +136,11 @@ class App(ctk.CTk):
         self.badge = ctk.CTkLabel(self.nav_buttons["events"], text="", font=w.FONTS.caption, fg_color=t.ROSE,
                                   text_color="#0b0e14", corner_radius=9, width=24, height=20)
 
+        if self.demo_mode:
+            self._build_demo_card(bar)
+
         ctl = ctk.CTkFrame(bar, fg_color="transparent")
-        ctl.grid(row=3, column=0, sticky="ew", padx=14)
+        ctl.grid(row=4, column=0, sticky="ew", padx=14)
         ctl.grid_columnconfigure(0, weight=1)
         self.run_btn = w.accent_button(ctl, "Check now", self.run_now, color=t.GREEN)
         self.run_btn.grid(row=0, column=0, sticky="ew")
@@ -129,7 +151,7 @@ class App(ctk.CTk):
             row=1, column=0, sticky="w", pady=(12, 0), padx=4)
 
         status = ctk.CTkFrame(bar, fg_color=t.CARD, corner_radius=12, border_width=1, border_color=t.BORDER)
-        status.grid(row=4, column=0, sticky="ew", padx=14, pady=16)
+        status.grid(row=5, column=0, sticky="ew", padx=14, pady=16)
         status.grid_columnconfigure(1, weight=1)
         self.dot = tk.Canvas(status, width=w.px(12), height=w.px(12), bg=t.CARD, highlightthickness=0)
         self.dot.grid(row=0, column=0, padx=(14, 6), pady=(12, 2))
@@ -139,6 +161,52 @@ class App(ctk.CTk):
         self.status_lines = ctk.CTkLabel(status, text="", font=w.FONTS.small, text_color=t.MUTED, anchor="w",
                                          justify="left")
         self.status_lines.grid(row=1, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 12))
+
+    def _build_demo_card(self, bar) -> None:
+        card = ctk.CTkFrame(bar, fg_color=t.CARD, corner_radius=12, border_width=1, border_color=t.BORDER)
+        card.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 14))
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.pack(fill="x", padx=12, pady=(10, 6))
+        ctk.CTkLabel(head, text="DEMO API", font=w.FONTS.caption, text_color=t.DIM).pack(side="left")
+        ctk.CTkLabel(head, text="simulate", font=w.FONTS.small, text_color=t.DIM).pack(side="right")
+        self.demo_seg = ctk.CTkSegmentedButton(
+            card, values=list(DEMO_MODES), command=self._set_demo_mode, font=w.FONTS.small, height=30,
+            fg_color=t.SURFACE, unselected_color=t.SURFACE, unselected_hover_color=t.CARD_HOVER,
+            text_color=t.TEXT, dynamic_resizing=False)
+        self.demo_seg.pack(fill="x", padx=10)
+        self.demo_hint = ctk.CTkLabel(card, text="", font=w.FONTS.small, text_color=t.MUTED, anchor="w",
+                                      justify="left", wraplength=w.px(190))
+        self.demo_hint.pack(fill="x", padx=12, pady=(6, 10))
+        label = next((k for k, v in DEMO_MODES.items() if v[0] == self.demo_mode), "Degraded")
+        self._style_demo(label)
+
+    def _style_demo(self, label: str) -> None:
+        _mode, color, hint = DEMO_MODES[label]
+        self.demo_seg.set(label)
+        self.demo_seg.configure(selected_color=t.mix(color, t.CARD, 0.45),
+                                selected_hover_color=t.mix(color, t.CARD, 0.35))
+        self.demo_hint.configure(text=hint)
+
+    def _set_demo_mode(self, label: str) -> None:
+        mode = DEMO_MODES[label][0]
+        self._style_demo(label)
+
+        def work():
+            try:
+                requests.post(DEMO_CONTROL_URL, json={"mode": mode}, timeout=2).raise_for_status()
+                self._ui_queue.put((label, None))
+            except requests.RequestException as exc:
+                self._ui_queue.put((label, exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _demo_switched(self, label: str, exc: Exception | None) -> None:
+        if exc:
+            self.toast(f"Could not reach the demo API: {exc}", t.ROSE, "Demo")
+            return
+        self.demo_mode = DEMO_MODES[label][0]
+        self.toast(f"{DEMO_MODES[label][2]} Running a check now…", DEMO_MODES[label][1], f"Demo mode: {label}")
+        self.run_now()
 
     # -------------------------------------------------------------------------
     def show(self, key: str) -> None:
@@ -224,6 +292,12 @@ class App(ctk.CTk):
                 self._set_busy(payload)
             elif kind == "error":
                 self.toast(payload, t.ROSE, "Error")
+        while True:
+            try:
+                label, exc = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._demo_switched(label, exc)
         self.after(200, self._poll)
 
     def _on_snapshot(self, snap) -> None:

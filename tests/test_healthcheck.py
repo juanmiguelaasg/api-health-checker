@@ -125,3 +125,21 @@ def test_full_run(tmp_path, base_url, monkeypatch):
     assert "List users" in page and "service(s) down" not in page  # one failure is not confirmed yet
     write_junit(results, tmp_path / "j.xml")
     assert 'failures="' in (tmp_path / "j.xml").read_text(encoding="utf-8")
+
+
+def test_demo_modes(base_url):
+    import requests
+    ctl = f"{base_url}/__demo/mode"
+    report = Endpoint("report", f"{base_url}/api/report", max_response_ms=800)
+    health = Endpoint("health", f"{base_url}/health", max_response_ms=2000)
+    fast = Settings(retries=0, timeout_seconds=5)
+    try:
+        assert requests.post(ctl, json={"mode": "healthy"}, timeout=5).json()["mode"] == "healthy"
+        assert check_endpoint(report, fast).ok                      # no artificial delay
+        requests.post(ctl, json={"mode": "outage"}, timeout=5)
+        r = check_endpoint(health, fast)
+        assert not r.ok and r.status == 503
+        assert requests.post(ctl, json={"mode": "nope"}, timeout=5).status_code == 400
+    finally:
+        requests.post(ctl, json={"mode": "degraded"}, timeout=5)
+    assert requests.get(ctl, timeout=5).json()["mode"] == "degraded"
